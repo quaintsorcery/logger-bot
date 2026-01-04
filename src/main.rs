@@ -1,6 +1,7 @@
 use crate::{bot::run_bot, database::Database};
 
 mod bot;
+mod chart;
 mod database;
 
 #[tokio::main]

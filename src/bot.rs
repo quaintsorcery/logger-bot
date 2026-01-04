@@ -1,12 +1,15 @@
 use futures::future::join_all;
 use teloxide::{
     prelude::*,
-    types::{KeyboardButton, KeyboardMarkup, ReplyMarkup},
+    types::{InputFile, KeyboardButton, KeyboardMarkup, ReplyMarkup},
     utils::command::BotCommands,
 };
 use tracing::{debug, error};
 
-use crate::database::Database;
+use crate::{
+    chart::{generate_personal_annual_chart, generate_personal_hourly_chart},
+    database::Database,
+};
 
 #[derive(BotCommands, Clone)]
 #[command(rename_rule = "lowercase")]
@@ -17,6 +20,10 @@ enum Command {
     Done,
     #[command(description = "Show your stats")]
     Stats,
+    #[command(description = "Show your annual stats")]
+    AnnualStats,
+    #[command(description = "Show your hourly stats")]
+    HourlyStats,
     #[command(description = "Show the leaderboard")]
     Leaderboard,
     #[command(description = "Delete all your data")]
@@ -29,6 +36,10 @@ fn main_keyboard() -> ReplyMarkup {
         vec![
             KeyboardButton::new("/stats"),
             KeyboardButton::new("/leaderboard"),
+        ],
+        vec![
+            KeyboardButton::new("/annualstats"),
+            KeyboardButton::new("/hourlystats"),
         ],
     ])
     .resize_keyboard();
@@ -68,7 +79,7 @@ async fn handle_command(
             bot.send_message(chat_id, "Database error :(")
                 .reply_markup(main_keyboard())
                 .await?;
-            return Ok(());
+            return respond(());
         }
     };
 
@@ -85,7 +96,7 @@ async fn handle_command(
                 bot.send_message(chat_id, "Database error :(")
                     .reply_markup(main_keyboard())
                     .await?;
-                return Ok(());
+                return respond(());
             }
             bot.send_message(chat_id, "👍")
                 .reply_markup(main_keyboard())
@@ -99,12 +110,78 @@ async fn handle_command(
                     bot.send_message(chat_id, "Database error :(")
                         .reply_markup(main_keyboard())
                         .await?;
-                    return Ok(());
+                    return respond(());
                 }
             };
             bot.send_message(chat_id, format!("Your score: {count}"))
                 .reply_markup(main_keyboard())
                 .await?;
+        }
+        Command::AnnualStats => {
+            let timestamps = match db.get_all_user_timestamps(user_id).await {
+                Ok(ts) => ts,
+                Err(err) => {
+                    error!("Failed to get timestamps for the user {user_id}: {err}");
+                    bot.send_message(chat_id, "Database error :(")
+                        .reply_markup(main_keyboard())
+                        .await?;
+                    return respond(());
+                }
+            };
+            let username = match bot.get_chat(user.id).await {
+                Ok(chat) => chat.username().map(|u| u.to_string()),
+                Err(err) => {
+                    debug!("Failed to get the username for {user_id}: {err}");
+                    None
+                }
+            };
+            let name = username.unwrap_or_else(|| user.id.to_string());
+            match generate_personal_annual_chart(&name, timestamps, None) {
+                Ok(png_bytes) => {
+                    bot.send_photo(chat_id, InputFile::memory(png_bytes))
+                        .await?;
+                }
+                Err(err) => {
+                    error!("Failed to generate the chart for {user_id}: {err}");
+                    bot.send_message(chat_id, "Error generating the chart :(")
+                        .reply_markup(main_keyboard())
+                        .await?;
+                    return respond(());
+                }
+            }
+        }
+        Command::HourlyStats => {
+            let timestamps = match db.get_all_user_timestamps(user_id).await {
+                Ok(ts) => ts,
+                Err(err) => {
+                    error!("Failed to get timestamps for the user {user_id}: {err}");
+                    bot.send_message(chat_id, "Database error :(")
+                        .reply_markup(main_keyboard())
+                        .await?;
+                    return respond(());
+                }
+            };
+            let username = match bot.get_chat(user.id).await {
+                Ok(chat) => chat.username().map(|u| u.to_string()),
+                Err(err) => {
+                    debug!("Failed to get the username for {user_id}: {err}");
+                    None
+                }
+            };
+            let name = username.unwrap_or_else(|| user.id.to_string());
+            match generate_personal_hourly_chart(&name, timestamps) {
+                Ok(png_bytes) => {
+                    bot.send_photo(chat_id, InputFile::memory(png_bytes))
+                        .await?;
+                }
+                Err(err) => {
+                    error!("Failed to generate the chart for {user_id}: {err}");
+                    bot.send_message(chat_id, "Error generating the chart :(")
+                        .reply_markup(main_keyboard())
+                        .await?;
+                    return respond(());
+                }
+            }
         }
         Command::Leaderboard => {
             let leaderboard = match db.get_leaderboard().await {
@@ -114,7 +191,7 @@ async fn handle_command(
                     bot.send_message(chat_id, "Database error :(")
                         .reply_markup(main_keyboard())
                         .await?;
-                    return Ok(());
+                    return respond(());
                 }
             };
             let futures = leaderboard.iter().enumerate().map(|(i, r)| {

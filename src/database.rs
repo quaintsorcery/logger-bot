@@ -47,6 +47,14 @@ impl Database {
         )
     }
 
+    pub async fn get_all_user_timestamps(&self, user_id: i64) -> anyhow::Result<Vec<i64>> {
+        Ok(
+            sqlx::query_scalar!("SELECT timestamp FROM logs WHERE user_id = ?;", user_id)
+                .fetch_all(&self.pool)
+                .await?,
+        )
+    }
+
     pub async fn get_leaderboard(&self) -> anyhow::Result<Vec<(i64, i64)>> {
         Ok(sqlx::query!(
             r#"
